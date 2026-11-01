@@ -8,3 +8,4 @@ plotly
 opencv-python
 streamlit
 jupyter
+statsmodels
