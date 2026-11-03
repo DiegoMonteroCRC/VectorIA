@@ -9,6 +9,10 @@ import pandas as pd
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.utils.class_weight import compute_class_weight
 
+import tensorflow as tf
+# Fijar semilla global para reproducibilidad exacta
+tf.keras.utils.set_random_seed(42)
+
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Conv2D, MaxPooling2D, BatchNormalization, GlobalAveragePooling2D, Dense, Dropout
@@ -20,14 +24,14 @@ def entrenar_cnn_mosquitos(data_path="../data/raw/images/",
                            img_size=(224, 224), 
                            batch_size=32, 
                            epochs=35, 
-                           model_save_path="../models/cnn_propia_mosquitos.h5"):
+                           model_save_path="../models/cnn_propia_mosquitos.keras"):
     """
     Entrena la arquitectura CNN propia para clasificar las 3 especies de mosquitos
     aplicando data augmentation con zoom compensatorio, BatchNormalization y GlobalAveragePooling2D.
     """
     image_shape = (img_size[0], img_size[1], 3)
     
-    # 1. Generadores de datos con aumentación y partición 80/20
+    # Generadores de datos con aumentación y partición 80/20
     image_gen = ImageDataGenerator(
         rotation_range=20,
         width_shift_range=0.15,
@@ -69,7 +73,7 @@ def entrenar_cnn_mosquitos(data_path="../data/raw/images/",
     num_classes = len(train_image_gen.class_indices)
     clases_nombres = list(train_image_gen.class_indices.keys())
 
-    # 2. Pesos de clase para compensar desbalance
+    # Pesos de clase para compensar desbalance
     pesos = compute_class_weight(
         class_weight='balanced',
         classes=np.unique(train_image_gen.classes),
@@ -77,7 +81,7 @@ def entrenar_cnn_mosquitos(data_path="../data/raw/images/",
     )
     class_weights = dict(enumerate(pesos))
 
-    # 3. Creación del Modelo CNN propio
+    # Creación del Modelo CNN propio
     model = Sequential()
     
     # Bloque 1
@@ -123,10 +127,12 @@ def entrenar_cnn_mosquitos(data_path="../data/raw/images/",
         class_weight=class_weights
     )
 
-    # 5. Guardado del modelo
+    # 5. Guardado del modelo (tanto en formato nativo .keras como en legacy .h5)
     os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
-    model.save(model_save_path)
-    print(f"Modelo guardado exitosamente en {model_save_path}")
+    base_save = os.path.splitext(model_save_path)[0]
+    model.save(f"{base_save}.keras")
+    model.save(f"{base_save}.h5")
+    print(f"Modelo guardado exitosamente en {base_save}.keras y {base_save}.h5")
 
     # 6. Evaluación y reporte de métricas
     pred_probabilities = model.predict(test_image_gen)
