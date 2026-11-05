@@ -23,7 +23,7 @@ Ejemplo de uso desde la app (con el modelo ya entrenado en el notebook):
     pronosticador, modelo = PronosticadorDengue.cargar(df, "models")
     pronosticador.pronosticar_desde(modelo, "2023-07-01")  # semana elegida por el usuario
     pronosticador.pronosticar_futuro(modelo)               # después del último dato
-    pronosticador.pronosticar_largo_plazo(modelo)          # 2025 y 2026
+    pronosticador.pronosticar_largo_plazo(modelo, clima_futuro=pronosticador.clima_futuro)  # 2025-2026
 """
 
 from pathlib import Path
@@ -86,6 +86,8 @@ class PronosticadorDengue:
         self.test_ind = None
         self.scaler = None
         self.scaler_y = None
+        self.clima_futuro = None   # clima real de las semanas futuras (opcional)
+        self._largo_plazo = None   # escenario de largo plazo ya calculado
 
     # ------------------------------------------------------------------
     # 1. Variables
@@ -322,35 +324,59 @@ class PronosticadorDengue:
             if fecha >= inicio:
                 return anio, (fecha - inicio).days // 7 + 1
 
-    def pronosticar_largo_plazo(self, model, semanas=104):
+    @staticmethod
+    def cargar_clima_futuro(ruta):
+        """
+        Lee el clima real de NASA POWER de 2025-2026 que genera src/clima_nasa.py.
+
+        Args:
+            ruta (str o Path): ruta de data/processed/clima_nasa_2025_2026.csv.
+
+        Returns:
+            pd.DataFrame: clima semanal con 'fecha_inicio_semana', las 4
+                variables del clima y 'log_lluvia'. Vacío si el archivo no existe.
+        """
+        ruta = Path(ruta)
+        if not ruta.exists():
+            return pd.DataFrame()
+        clima = pd.read_csv(ruta, parse_dates=["fecha_inicio_semana"])
+        clima["log_lluvia"] = np.log1p(clima["lluvia_mm"])
+        return clima
+
+    def pronosticar_largo_plazo(self, model, semanas=104, clima_futuro=None):
         """
         Pronostica más allá de los datos (por ejemplo, 2025 y 2026) repitiendo
         el pronóstico de 4 semanas, como el forecast de varios periodos visto
         en clase: se predicen 4 semanas, se agregan a la ventana y se vuelve
         a predecir.
 
-        Como el clima futuro no se conoce, para cada semana nueva se usa el
-        clima promedio de esa semana epidemiológica en 2014-2024.
+        Como recomendó el profesor, solo las primeras 4 semanas son un
+        pronóstico (Tipo = 'Pronóstico'); las demás son posibles escenarios
+        (Tipo = 'Escenario'), porque el error se acumula en cada repetición
+        y el modelo no puede anticipar brotes nuevos.
 
-        Limitación: el error se acumula en cada repetición y el modelo no puede
-        anticipar brotes nuevos, así que sirve para ver la tendencia y la
-        estacionalidad, no como cifra exacta.
+        Clima de las semanas futuras: si se pasa clima_futuro (por ejemplo,
+        el clima real de NASA POWER), se usa para las semanas que tenga; para
+        las demás se usa el clima promedio de esa semana epidemiológica en
+        los datos.
 
         Args:
             model (Sequential): modelo entrenado con toda la serie.
             semanas (int): semanas a pronosticar (104 = 2 años).
+            clima_futuro (pd.DataFrame): clima semanal con 'fecha_inicio_semana',
+                'temp_min_c', 'log_lluvia', 'humedad_rel_pct' y 'temp_max_c'.
+                Si es None se usa solo el clima promedio.
 
         Returns:
             pd.DataFrame: índice = fecha de inicio de cada semana, columnas
-                'anio', 'semana_epi', 'Forecast' y 'Año típico' (mediana de
-                los casos de esa semana epidemiológica en los datos, como
-                referencia).
+                'anio', 'semana_epi', 'Forecast', 'Tipo', 'Clima' (de dónde
+                salió el clima de esa semana) y 'Año típico' (mediana de los
+                casos de esa semana epidemiológica, como referencia).
         """
-        if getattr(self, "_largo_plazo", None) is not None and len(self._largo_plazo) >= semanas:
-            return self._largo_plazo.iloc[:semanas]
-
         clima = ["temp_min_c", "log_lluvia", "humedad_rel_pct", "temp_max_c"]
         clima_promedio = self.df.groupby("semana_epi")[clima].mean()
+        clima_real = (pd.DataFrame(columns=clima) if clima_futuro is None or len(clima_futuro) == 0
+                      else clima_futuro.set_index("fecha_inicio_semana")[clima])
         historia = self.df.set_index("fecha_inicio_semana")[self.columnas].copy()
         filas = []
 
@@ -363,18 +389,23 @@ class PronosticadorDengue:
             for k in range(self.semanas_pred):
                 fecha = historia.index[-1] + pd.Timedelta(weeks=1)
                 anio, semana = self.semana_epidemiologica(fecha)
-                nueva = clima_promedio.loc[min(semana, clima_promedio.index.max())].copy()
+                if fecha in clima_real.index:
+                    nueva, origen = clima_real.loc[fecha].copy(), "NASA POWER (real)"
+                else:
+                    nueva = clima_promedio.loc[min(semana, clima_promedio.index.max())].copy()
+                    origen = "Promedio de la semana"
                 nueva["log_casos"] = ultimo_log + cambio[k]
                 nueva["semana_sin"] = np.sin(2 * np.pi * semana / 52)
                 nueva["semana_cos"] = np.cos(2 * np.pi * semana / 52)
                 historia.loc[fecha] = nueva[self.columnas]
                 filas.append({"fecha": fecha, "anio": anio, "semana_epi": semana,
-                              "Forecast": round(float(np.exp(nueva["log_casos"])))})
+                              "Forecast": round(float(np.exp(nueva["log_casos"]))),
+                              "Tipo": "Pronóstico" if len(filas) < self.semanas_pred else "Escenario",
+                              "Clima": origen})
 
         largo = pd.DataFrame(filas).set_index("fecha").iloc[:semanas]
         largo["Año típico"] = largo["semana_epi"].map(self.año_tipico())
-        self._largo_plazo = largo
-        return self._largo_plazo
+        return largo
 
     def año_tipico(self):
         """
@@ -410,8 +441,9 @@ class PronosticadorDengue:
         - Si la semana está dentro de los datos (2014-2024), el modelo usa las
           26 semanas reales que terminan en ella y se devuelven también los
           casos reales para comparar.
-        - Si la semana es de 2025 o 2026, se toma del pronóstico de largo
-          plazo (ver pronosticar_largo_plazo).
+        - Si la semana es de 2025 o 2026, se toma del escenario de largo
+          plazo (ver pronosticar_largo_plazo), con el clima real de NASA
+          POWER si se cargó en el atributo clima_futuro.
 
         Args:
             model (Sequential): modelo entrenado.
@@ -427,15 +459,18 @@ class PronosticadorDengue:
         fechas_datos = self.df["fecha_inicio_semana"]
         ultima = fechas_datos.iloc[-1]
 
-        # Semana futura (2025-2026): se usa el pronóstico de largo plazo
+        # Semana futura (2025-2026): se usa el escenario de largo plazo
         if fecha > ultima + pd.Timedelta(days=6):
-            largo = self.pronosticar_largo_plazo(model)
+            if getattr(self, "_largo_plazo", None) is None:
+                self._largo_plazo = self.pronosticar_largo_plazo(
+                    model, clima_futuro=getattr(self, "clima_futuro", None))
+            largo = self._largo_plazo
             inicio = int(np.searchsorted(largo.index.values, fecha.to_datetime64(), side="right"))
             tabla = largo.iloc[inicio:inicio + self.semanas_pred].copy()
             if len(tabla) < self.semanas_pred:
                 raise ValueError(f"Solo se puede pronosticar hasta {largo.index[-1].date()}.")
             tabla["Casos reales"] = np.nan
-            return tabla[["Forecast", "Casos reales", "Año típico"]]
+            return tabla[["Forecast", "Casos reales", "Año típico", "Tipo", "Clima"]]
 
         semana = int(np.searchsorted(fechas_datos.values, fecha.to_datetime64(), side="right")) - 1
         if semana < self.longitud - 1:
@@ -453,7 +488,8 @@ class PronosticadorDengue:
                   .reindex(fechas).values)
         tipico = [self.año_tipico().get(self.semana_epidemiologica(f)[1]) for f in fechas]
         return pd.DataFrame({"Forecast": casos.round(), "Casos reales": reales,
-                             "Año típico": tipico}, index=fechas)
+                             "Año típico": tipico, "Tipo": "Pronóstico",
+                             "Clima": "Datos reales"}, index=fechas)
 
     def pronosticar_futuro(self, model):
         """
@@ -507,5 +543,8 @@ class PronosticadorDengue:
         pronosticador.scaler_y = datos["scaler_y"]
         pronosticador.scaled_data = pronosticador.scaler.transform(
             pronosticador.df[pronosticador.columnas])
+        # Clima real de 2025-2026 (si ya se generó con src/clima_nasa.py)
+        ruta_clima = Path(carpeta).resolve().parent / "data" / "processed" / "clima_nasa_2025_2026.csv"
+        pronosticador.clima_futuro = cls.cargar_clima_futuro(ruta_clima)
         modelo = load_model(carpeta / f"{nombre}.h5", compile=False)
         return pronosticador, modelo
