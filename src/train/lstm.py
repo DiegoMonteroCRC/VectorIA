@@ -24,6 +24,7 @@ Ejemplo de uso desde la app (con el modelo ya entrenado en el notebook):
     pronosticador.pronosticar_desde(modelo, "2023-07-01")  # semana elegida por el usuario
     pronosticador.pronosticar_futuro(modelo)               # después del último dato
     pronosticador.pronosticar_largo_plazo(modelo, clima_futuro=pronosticador.clima_futuro)  # 2025-2026
+    pronosticador.comparar_con_umbral(modelo, "2024-06-01")  # pronóstico vs umbral endémico
 """
 
 from pathlib import Path
@@ -88,6 +89,7 @@ class PronosticadorDengue:
         self.scaler_y = None
         self.clima_futuro = None   # clima real de las semanas futuras (opcional)
         self._largo_plazo = None   # escenario de largo plazo ya calculado
+        self._suma_4 = None        # suma de casos de 4 semanas (para el umbral endémico)
 
     # ------------------------------------------------------------------
     # 1. Variables
@@ -406,6 +408,64 @@ class PronosticadorDengue:
         largo = pd.DataFrame(filas).set_index("fecha").iloc[:semanas]
         largo["Año típico"] = largo["semana_epi"].map(self.año_tipico())
         return largo
+
+    def umbral_endemico(self, fecha):
+        """
+        Umbral endémico de las 4 semanas siguientes a la semana elegida, con
+        el mismo cálculo de vectoria_acciones.csv (canal endémico simplificado):
+        el percentil 75 de la suma de casos de esas mismas 4 semanas en los
+        años anteriores (de 3 a 5 años, según los que haya en los datos).
+
+        Como indicó el profesor, el umbral es de las 4 semanas juntas, no
+        semanal: se compara con la suma del pronóstico de 4 semanas, o se
+        divide entre 4 como aproximación semanal.
+
+        Args:
+            fecha (str o Timestamp): cualquier día de la semana elegida.
+
+        Returns:
+            float: umbral de las 4 semanas (NaN si hay menos de 3 años previos).
+        """
+        if getattr(self, "_suma_4", None) is None:
+            casos = self.df["casos_dengue"]
+            suma = casos[::-1].rolling(self.semanas_pred).sum()[::-1].shift(-1)
+            self._suma_4 = dict(zip(zip(self.df["anio"], self.df["semana_epi"]), suma))
+        anio, semana = self.semana_epidemiologica(pd.Timestamp(fecha))
+        previos = [self._suma_4.get((anio - k, semana)) for k in range(1, 6)]
+        previos = [v for v in previos if v is not None and not np.isnan(v)]
+        # Se redondea a casos enteros, igual que en vectoria_acciones.csv
+        return float(round(np.percentile(previos, 75))) if len(previos) >= 3 else np.nan
+
+    def comparar_con_umbral(self, model, fecha):
+        """
+        Compara el pronóstico de las 4 semanas siguientes con el umbral
+        endémico, para la pestaña "Elegir semana" del dashboard.
+
+        Args:
+            model (Sequential): modelo entrenado.
+            fecha (str o Timestamp): cualquier día de la semana elegida.
+
+        Returns:
+            dict: suma del pronóstico de 4 semanas, umbral de 4 semanas, umbral
+                semanal aproximado (umbral / 4), razón pronóstico / umbral,
+                situación y tipo (Pronóstico o Escenario).
+        """
+        tabla = self.pronosticar_desde(model, fecha)
+        suma = float(tabla["Forecast"].sum())
+        umbral = self.umbral_endemico(fecha)
+        razon = suma / umbral if umbral and not np.isnan(umbral) else np.nan
+        if np.isnan(razon):
+            situacion = "Sin umbral (faltan años previos)"
+        elif razon > 2:
+            situacion = "Más del doble del umbral"
+        elif razon > 1:
+            situacion = "Sobre el umbral"
+        else:
+            situacion = "Por debajo del umbral"
+        return {"Pronóstico 4 semanas": round(suma), "Umbral 4 semanas": umbral,
+                "Umbral semanal (aprox.)": round(umbral / self.semanas_pred, 1) if not np.isnan(umbral) else np.nan,
+                "Razón pronóstico / umbral": round(razon, 2) if not np.isnan(razon) else np.nan,
+                "Situación": situacion, "Tipo": tabla["Tipo"].iloc[0]}
 
     def año_tipico(self):
         """
