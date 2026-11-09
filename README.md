@@ -75,6 +75,8 @@ Se corren en este orden:
 
 ## Cómo correr la API y la app
 
+Antes de empezar, hay que haber seguido la sección **Instalación** (ambiente virtual activado y librerías instaladas). Los dos comandos se corren **desde la carpeta raíz del proyecto** (`VectorIA/`), cada uno en su propia terminal.
+
 1. En una terminal, levantar la API:
 
 ```
@@ -88,6 +90,8 @@ La documentación de la API queda en http://127.0.0.1:8000/docs
 ```
 streamlit run app/Home.py
 ```
+
+La app se abre en el navegador (normalmente en http://localhost:8501). Si la API está apagada, la app carga los modelos directamente y funciona igual.
 
 ## Resultados
 
@@ -125,7 +129,15 @@ Clasificador de 4 clases (monitoreo normal, eliminación de criaderos, fumigaci�
 
 ## App de Streamlit
 
-La app une los tres modelos: el usuario sube una foto, elige una semana y recibe una recomendación, además de un mapa de calor de casos por cantón. **Estado: en construcción.**
+La app une los tres modelos y obtiene sus resultados de una API REST hecha con FastAPI (si la API no está encendida, la app carga los modelos directamente). Tiene 5 pestañas:
+
+1. **Identificación entomológica:** se sube la foto de un mosquito y la CNN dice la especie.
+2. **Pronóstico epidemiológico:** se elige una semana y el LSTM pronostica los casos de las 4 semanas siguientes contra el umbral endémico.
+3. **Recomendación sanitaria:** la ANN recomienda la acción preventiva y explica el motivo.
+4. **Vigilancia cantonal:** mapa de calor de casos por cantón.
+5. **Simulación de escenarios:** controles para ver cómo cambia la recomendación ("¿qué pasaría si...?").
+
+Para correrla, ver la sección **Cómo correr la API y la app**.
 
 ## Limitaciones
 
