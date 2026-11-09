@@ -87,6 +87,7 @@ La documentación de la API queda en http://127.0.0.1:8000/docs
 
 ```
 streamlit run app/Home.py
+```
 
 ## Resultados
 
