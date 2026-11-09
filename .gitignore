@@ -222,5 +222,8 @@ __marimo__/
 # IDE
 .idea/
 
-# Datos locales (no se suben)
+# Configuración local de PyCharm
+.idea/
+
+# Imágenes de mosquitos (muy pesadas, se comparten por Drive)
 data/raw/images/
