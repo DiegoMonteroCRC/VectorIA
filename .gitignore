@@ -222,3 +222,6 @@ __marimo__/
 .idea/
 
 .idea/
+
+# Imágenes de mosquitos (muy pesadas, se comparten por Drive)
+data/raw/images/
