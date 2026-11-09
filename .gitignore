@@ -219,9 +219,11 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# IDE
 .idea/
 
+# Configuración local de PyCharm
 .idea/
 
-# Im�genes de mosquitos (muy pesadas, se comparten por Drive)
+# Imágenes de mosquitos (muy pesadas, se comparten por Drive)
 data/raw/images/

@@ -9,3 +9,8 @@ opencv-python
 streamlit
 jupyter
 statsmodels
+fastapi
+uvicorn
+python-multipart
+requests
+pillow
