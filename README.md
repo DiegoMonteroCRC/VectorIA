@@ -73,6 +73,21 @@ Se corren en este orden:
 3. `notebooks/03_LSTM_Casos.ipynb`: pronóstico de casos.
 4. `notebooks/04_ANN_Acciones.ipynb`: recomendación de acciones.
 
+## Cómo correr la API y la app
+
+1. En una terminal, levantar la API:
+
+```
+uvicorn api.main:app --reload
+```
+
+La documentación de la API queda en http://127.0.0.1:8000/docs
+
+2. En otra terminal, abrir la app:
+
+```
+streamlit run app/Home.py
+
 ## Resultados
 
 ### Módulo 1: CNN (identificación de mosquitos)
