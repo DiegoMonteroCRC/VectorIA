@@ -176,8 +176,8 @@ def pronosticar_casos(solicitud: SolicitudLSTM):
             "fecha": pd.to_datetime(fecha_idx).strftime("%Y-%m-%d"),
             "forecast": int(round(fila["Forecast"])),
         }
-        if "Real" in fila and not pd.isna(fila["Real"]):
-            item["real"] = int(round(fila["Real"]))
+        if "Casos reales" in fila and not pd.isna(fila["Casos reales"]):
+            item["real"] = int(round(fila["Casos reales"]))
         else:
             item["real"] = None
         detalle.append(item)
