@@ -28,6 +28,10 @@ Ejemplo de uso desde la app (con el modelo ya entrenado en el notebook):
 """
 
 from pathlib import Path
+import os
+if "KERAS_HOME" not in os.environ:
+    os.environ["KERAS_HOME"] = os.path.abspath(".keras")
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 import joblib
 import numpy as np
