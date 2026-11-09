@@ -388,7 +388,7 @@ with tab2:
                     {
                         "fecha": pd.to_datetime(f_idx).strftime("%Y-%m-%d"),
                         "forecast": int(round(fila["Forecast"])),
-                        "real": int(round(fila["Real"])) if "Real" in fila and not pd.isna(fila["Real"]) else None,
+                        "real": int(round(fila["Casos reales"])) if "Casos reales" in fila and not pd.isna(fila["Casos reales"]) else None,
                     }
                     for f_idx, fila in t_pred.iterrows()
                 ]
@@ -641,6 +641,28 @@ with tab4:
             fig_p = px.pie(p_agrup, values="casos_dengue", names="provincia", hole=0.35)
             fig_p.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10), template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_p, use_container_width=True)
+
+        st.markdown("##### Mapa de Calor de Casos por Cantón y Año")
+        df_mapa = df_base_cantones.copy()
+        if prov_f != "Todas":
+            df_mapa = df_mapa[df_mapa["provincia"] == prov_f]
+        top_cantones = df_mapa.groupby("canton")["casos_dengue"].sum().nlargest(20).index
+        tabla_mapa = (
+            df_mapa[df_mapa["canton"].isin(top_cantones)]
+            .pivot_table(index="canton", columns="anio", values="casos_dengue", aggfunc="sum", fill_value=0)
+            .loc[top_cantones]
+        )
+        fig_mapa = px.imshow(
+            tabla_mapa,
+            color_continuous_scale="YlOrRd",
+            aspect="auto",
+            text_auto=True,
+            labels={"x": "Año", "y": "Cantón", "color": "Casos"},
+        )
+        fig_mapa.update_xaxes(type="category")
+        fig_mapa.update_layout(height=600, margin=dict(l=0, r=20, t=10, b=10), template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig_mapa, use_container_width=True)
+        st.caption("Los 20 cantones con más casos entre 2013 y 2018 en la provincia elegida. Sirve para comparar cantones entre sí: la suma cantonal no cuadra con el total nacional.")
 
 with tab5:
     st.markdown("#### Análisis de Sensibilidad y Simulación de Escenarios")
