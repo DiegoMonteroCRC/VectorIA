@@ -219,6 +219,8 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# IDE
 .idea/
 
-.idea/
+# Datos locales (no se suben)
+data/raw/images/
