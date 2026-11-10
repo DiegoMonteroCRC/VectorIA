@@ -1,0 +1,31 @@
+version: "3.8"
+
+services:
+  vectoria-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: diegomonterocrc/vectoria-api:latest
+    container_name: vectoria-api
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - TF_ENABLE_ONEDNN_OPTS=0
+      - TF_CPP_MIN_LOG_LEVEL=2
+      - VECTORIA_CNN_MODEL=cnn_propia_mosquitos
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1024M
+        reservations:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

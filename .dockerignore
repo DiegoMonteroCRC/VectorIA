@@ -1,0 +1,35 @@
+# Excluir control de versiones y entornos locales
+.git/
+.gitignore
+.idea/
+.vscode/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Excluir datasets pesados y carpeta de imágenes de 5 GB
+data/raw/images/
+data/raw/vectoria_dengue_nacional_real.csv
+data/raw/vectoria_dengue_semanal.csv
+data/raw/vectoria_acciones.csv
+
+# Excluir cuadernos de Jupyter y documentación pesada
+notebooks/
+*.ipynb
+*.pdf
+Informe_tecnico_VectorIA*.pdf
+Documentacion_Modulo3_ANN_VectorIA.pdf
+USO_DE_IA.pdf
+
+# Excluir frontend (corre por separado en Streamlit Community Cloud)
+app/
+requirements-frontend.txt
+requirements.txt
+
+# Excluir cachés
+.pytest_cache/
+.coverage
+htmlcov/
