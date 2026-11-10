@@ -1,16 +1,8 @@
-tensorflow
-numpy
-pandas
-scikit-learn
-matplotlib
-seaborn
-plotly
-opencv-python
-streamlit
-jupyter
-statsmodels
-fastapi
-uvicorn
-python-multipart
-requests
-pillow
+# Dependencias de producción para Streamlit Community Cloud
+# Nota: Para el backend FastAPI, consultar requirements-backend.txt
+streamlit>=1.35.0,<2.0.0
+requests>=2.31.0
+pandas>=2.0.0,<3.2.0
+numpy>=1.24.0,<2.3.0
+plotly>=5.18.0
+pillow>=10.0.0
