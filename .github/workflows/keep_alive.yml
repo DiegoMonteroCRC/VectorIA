@@ -14,3 +14,4 @@ jobs:
         run: |
           echo "Enviando ping a la API de VectorIA..."
           curl -f -m 25 https://vectoria-xvs1.onrender.com/health || echo "La API tardó en responder o está despertando."
+
