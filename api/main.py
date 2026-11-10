@@ -42,6 +42,7 @@ MODELOS: Dict[str, Any] = {
     "ann": None,
     "df_lstm": None,
     "df_cantonal": None,
+    "errores": {},
 }
 
 
@@ -56,6 +57,7 @@ def cargar_modelo_cnn() -> None:
         carpeta_modelos / "cnn_propia_mosquitos.keras",
         carpeta_modelos / "cnn_propia_mosquitos.h5",
         carpeta_modelos / "cnn_mobilenetv2_mosquitos.keras",
+        carpeta_modelos / "cnn_mobilenetv2_mosquitos.h5",
     ]
     
     for ruta in rutas_candidatas:
@@ -66,7 +68,11 @@ def cargar_modelo_cnn() -> None:
                 logger.info(f"Modelo CNN cargado exitosamente desde: {ruta.name}")
                 return
             except Exception as e:
-                logger.warning(f"Error cargando candidato CNN {ruta.name}: {e}")
+                msg = f"{type(e).__name__}: {str(e)}"
+                logger.warning(f"Error cargando candidato CNN {ruta.name}: {msg}")
+                MODELOS["errores"][f"cnn_{ruta.name}"] = msg
+        else:
+            MODELOS["errores"][f"cnn_no_existe_{ruta.name}"] = "Archivo no encontrado"
                 
     logger.error("No fue posible inicializar ningún modelo CNN.")
 
@@ -77,7 +83,9 @@ def cargar_modelo_lstm() -> None:
     carpeta_modelos = ROOT_DIR / "models"
     
     if not ruta_datos_lstm.exists():
-        logger.error(f"Dataset para LSTM no encontrado: {ruta_datos_lstm}")
+        msg = f"Dataset para LSTM no encontrado: {ruta_datos_lstm}"
+        logger.error(msg)
+        MODELOS["errores"]["lstm"] = msg
         return
         
     try:
@@ -88,7 +96,9 @@ def cargar_modelo_lstm() -> None:
         MODELOS["lstm_modelo"] = mod_lstm
         logger.info("Modelo LSTM y serie histórica cargados exitosamente.")
     except Exception as e:
-        logger.error(f"Error cargando módulo LSTM: {e}")
+        msg = f"{type(e).__name__}: {str(e)}"
+        logger.error(f"Error cargando módulo LSTM: {msg}")
+        MODELOS["errores"]["lstm"] = msg
 
 
 def cargar_modelo_ann() -> None:
@@ -98,7 +108,9 @@ def cargar_modelo_ann() -> None:
         MODELOS["ann"] = RecomendadorAcciones.cargar(str(carpeta_modelos))
         logger.info("Modelo ANN y preprocesadores cargados exitosamente.")
     except Exception as e:
-        logger.error(f"Error cargando módulo ANN: {e}")
+        msg = f"{type(e).__name__}: {str(e)}"
+        logger.error(f"Error cargando módulo ANN: {msg}")
+        MODELOS["errores"]["ann"] = msg
 
 
 def cargar_datos_cantonales() -> None:
@@ -109,9 +121,12 @@ def cargar_datos_cantonales() -> None:
             MODELOS["df_cantonal"] = pd.read_csv(ruta_cantonal)
             logger.info("Dataset cantonal cargado exitosamente.")
         except Exception as e:
-            logger.error(f"Error cargando dataset cantonal: {e}")
+            msg = f"{type(e).__name__}: {str(e)}"
+            logger.error(f"Error cargando dataset cantonal: {msg}")
+            MODELOS["errores"]["cantonal"] = msg
     else:
         logger.warning(f"Dataset cantonal no encontrado en: {ruta_cantonal}")
+        MODELOS["errores"]["cantonal"] = f"No encontrado: {ruta_cantonal}"
 
 
 def inicializar_todos_los_modelos():
@@ -195,11 +210,16 @@ def estado_salud():
         estado_global = "no_disponible"
         codigo_http = status.HTTP_503_SERVICE_UNAVAILABLE
 
+    carpeta_m = ROOT_DIR / "models"
+    archivos = [f.name for f in carpeta_m.glob("*")] if carpeta_m.exists() else []
+
     contenido = {
         "estado": estado_global,
         "modelos_activos": f"{activos}/{total}",
         "cnn_modelo_activo": MODELOS.get("cnn_nombre"),
         "modelos": modelos_estado,
+        "errores": MODELOS.get("errores", {}),
+        "archivos_modelos": archivos,
     }
     return JSONResponse(status_code=codigo_http, content=contenido)
 
