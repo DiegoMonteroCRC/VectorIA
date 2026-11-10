@@ -1,15 +1,24 @@
 import io
 import os
 import sys
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+# Configuración de rutas del proyecto
 ROOT_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(ROOT_DIR))
+if str(ROOT_DIR) not in sys.path:
+    sys.path.append(str(ROOT_DIR))
 
+# Configuración de entorno Keras / TensorFlow para evitar interferencias
 if "KERAS_HOME" not in os.environ:
     os.environ["KERAS_HOME"] = str(ROOT_DIR / ".keras")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("VectorIA-API")
 
 import numpy as np
 import pandas as pd
@@ -17,16 +26,119 @@ from PIL import Image
 from pydantic import BaseModel, Field
 import keras
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.train.lstm import PronosticadorDengue
 from src.train.ann import RecomendadorAcciones
 
+# Diccionario centralizado de modelos cargados
+MODELOS: Dict[str, Any] = {
+    "cnn": None,
+    "cnn_nombre": None,
+    "lstm_pronosticador": None,
+    "lstm_modelo": None,
+    "ann": None,
+    "df_lstm": None,
+    "df_cantonal": None,
+}
+
+
+def cargar_modelo_cnn() -> None:
+    """Carga aislada y resiliente del modelo CNN para identificación entomológica."""
+    nombre_elegido = os.environ.get("VECTORIA_CNN_MODEL", "cnn_propia_mosquitos")
+    carpeta_modelos = ROOT_DIR / "models"
+    
+    rutas_candidatas = [
+        carpeta_modelos / f"{nombre_elegido}.keras",
+        carpeta_modelos / f"{nombre_elegido}.h5",
+        carpeta_modelos / "cnn_propia_mosquitos.keras",
+        carpeta_modelos / "cnn_propia_mosquitos.h5",
+        carpeta_modelos / "cnn_mobilenetv2_mosquitos.keras",
+    ]
+    
+    for ruta in rutas_candidatas:
+        if ruta.exists():
+            try:
+                MODELOS["cnn"] = keras.models.load_model(str(ruta), compile=False)
+                MODELOS["cnn_nombre"] = ruta.name
+                logger.info(f"Modelo CNN cargado exitosamente desde: {ruta.name}")
+                return
+            except Exception as e:
+                logger.warning(f"Error cargando candidato CNN {ruta.name}: {e}")
+                
+    logger.error("No fue posible inicializar ningún modelo CNN.")
+
+
+def cargar_modelo_lstm() -> None:
+    """Carga aislada del modelo recurrente LSTM y su dataset histórico."""
+    ruta_datos_lstm = ROOT_DIR / "data" / "processed" / "dengue_nacional_procesado.csv"
+    carpeta_modelos = ROOT_DIR / "models"
+    
+    if not ruta_datos_lstm.exists():
+        logger.error(f"Dataset para LSTM no encontrado: {ruta_datos_lstm}")
+        return
+        
+    try:
+        df_lstm = pd.read_csv(ruta_datos_lstm, parse_dates=["fecha_inicio_semana"])
+        MODELOS["df_lstm"] = df_lstm
+        pronosticador, mod_lstm = PronosticadorDengue.cargar(df_lstm, str(carpeta_modelos))
+        MODELOS["lstm_pronosticador"] = pronosticador
+        MODELOS["lstm_modelo"] = mod_lstm
+        logger.info("Modelo LSTM y serie histórica cargados exitosamente.")
+    except Exception as e:
+        logger.error(f"Error cargando módulo LSTM: {e}")
+
+
+def cargar_modelo_ann() -> None:
+    """Carga aislada de la red densa ANN de recomendación sanitaria."""
+    carpeta_modelos = ROOT_DIR / "models"
+    try:
+        MODELOS["ann"] = RecomendadorAcciones.cargar(str(carpeta_modelos))
+        logger.info("Modelo ANN y preprocesadores cargados exitosamente.")
+    except Exception as e:
+        logger.error(f"Error cargando módulo ANN: {e}")
+
+
+def cargar_datos_cantonales() -> None:
+    """Carga del dataset de vigilancia cantonal histórica."""
+    ruta_cantonal = ROOT_DIR / "data" / "raw" / "vectoria_casos_cantonal_anual_real.csv"
+    if ruta_cantonal.exists():
+        try:
+            MODELOS["df_cantonal"] = pd.read_csv(ruta_cantonal)
+            logger.info("Dataset cantonal cargado exitosamente.")
+        except Exception as e:
+            logger.error(f"Error cargando dataset cantonal: {e}")
+    else:
+        logger.warning(f"Dataset cantonal no encontrado en: {ruta_cantonal}")
+
+
+def inicializar_todos_los_modelos():
+    """Ejecuta la carga independiente de cada componente."""
+    logger.info("Inicializando subsistemas de Machine Learning / Deep Learning...")
+    cargar_modelo_cnn()
+    cargar_modelo_lstm()
+    cargar_modelo_ann()
+    cargar_datos_cantonales()
+    logger.info("Inicialización completada.")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Gestor moderno de ciclo de vida (startup/shutdown) para FastAPI."""
+    inicializar_todos_los_modelos()
+    yield
+    logger.info("Apagando API VectorIA...")
+
+
 app = FastAPI(
     title="VectorIA API",
-    description="API REST para Vigilancia Epidemiológica del Dengue en Costa Rica",
+    description="API REST para Vigilancia Epidemiológica del Dengue en Costa Rica (CUC)",
     version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -36,41 +148,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-MODELOS = {
-    "cnn": None,
-    "lstm_pronosticador": None,
-    "lstm_modelo": None,
-    "ann": None,
-    "df_lstm": None,
-    "df_cantonal": None,
-}
-
-
-@app.on_event("startup")
-def inicializar_modelos():
-    ruta_cnn = ROOT_DIR / "models" / "cnn_propia_mosquitos.keras"
-    if not ruta_cnn.exists():
-        ruta_cnn = ROOT_DIR / "models" / "cnn_propia_mosquitos.h5"
-    if ruta_cnn.exists():
-        MODELOS["cnn"] = keras.models.load_model(str(ruta_cnn))
-
-    ruta_datos_lstm = ROOT_DIR / "data" / "processed" / "dengue_nacional_procesado.csv"
-    if ruta_datos_lstm.exists():
-        df_lstm = pd.read_csv(ruta_datos_lstm, parse_dates=["fecha_inicio_semana"])
-        MODELOS["df_lstm"] = df_lstm
-        pronosticador, mod_lstm = PronosticadorDengue.cargar(df_lstm, str(ROOT_DIR / "models"))
-        MODELOS["lstm_pronosticador"] = pronosticador
-        MODELOS["lstm_modelo"] = mod_lstm
-
-    try:
-        MODELOS["ann"] = RecomendadorAcciones.cargar(str(ROOT_DIR / "models"))
-    except Exception as e:
-        print(f"Advertencia al cargar ANN: {e}")
-
-    ruta_cantonal = ROOT_DIR / "data" / "raw" / "vectoria_casos_cantonal_anual_real.csv"
-    if ruta_cantonal.exists():
-        MODELOS["df_cantonal"] = pd.read_csv(ruta_cantonal)
 
 
 class SolicitudLSTM(BaseModel):
@@ -92,32 +169,62 @@ def inicio():
         "descripcion": "API REST de soporte a la vigilancia del Dengue en Costa Rica",
         "institucion": "Colegio Universitario de Cartago (CUC)",
         "documentacion": "/docs",
+        "version": "1.0.0",
     }
 
 
 @app.get("/health")
 def estado_salud():
-    return {
-        "estado": "operativo",
-        "modelos": {
-            "cnn": MODELOS["cnn"] is not None,
-            "lstm": MODELOS["lstm_modelo"] is not None,
-            "ann": MODELOS["ann"] is not None,
-            "datos_cantonales": MODELOS["df_cantonal"] is not None,
-        },
+    modelos_estado = {
+        "cnn": MODELOS["cnn"] is not None,
+        "lstm": MODELOS["lstm_modelo"] is not None and MODELOS["lstm_pronosticador"] is not None,
+        "ann": MODELOS["ann"] is not None,
+        "datos_cantonales": MODELOS["df_cantonal"] is not None,
     }
+    
+    activos = sum(1 for v in modelos_estado.values() if v)
+    total = len(modelos_estado)
+    
+    if activos == total:
+        estado_global = "operativo"
+        codigo_http = status.HTTP_200_OK
+    elif activos > 0:
+        estado_global = "degradado"
+        codigo_http = status.HTTP_200_OK
+    else:
+        estado_global = "no_disponible"
+        codigo_http = status.HTTP_503_SERVICE_UNAVAILABLE
+
+    contenido = {
+        "estado": estado_global,
+        "modelos_activos": f"{activos}/{total}",
+        "cnn_modelo_activo": MODELOS.get("cnn_nombre"),
+        "modelos": modelos_estado,
+    }
+    return JSONResponse(status_code=codigo_http, content=contenido)
 
 
 @app.post("/predict/cnn")
-async def predecir_mosquito(archivo: UploadFile = File(...)):
+def predecir_mosquito(archivo: UploadFile = File(...)):
+    """
+    Identificación entomológica mediante CNN.
+    Se ejecuta como endpoint síncrono para que FastAPI lo delegue al threadpool de workers
+    evitando bloquear el bucle de eventos asíncrono.
+    """
     if MODELOS["cnn"] is None:
-        raise HTTPException(status_code=503, detail="Modelo CNN no disponible.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Modelo CNN no disponible en el servidor.",
+        )
 
     try:
-        contenido = await archivo.read()
+        contenido = archivo.file.read()
         imagen = Image.open(io.BytesIO(contenido)).convert("RGB")
     except Exception:
-        raise HTTPException(status_code=400, detail="Archivo de imagen inválido.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Archivo de imagen inválido o corrupto.",
+        )
 
     img_resized = imagen.resize((224, 224))
     img_array = np.array(img_resized, dtype=np.float32) / 255.0
@@ -147,7 +254,10 @@ async def predecir_mosquito(archivo: UploadFile = File(...)):
 def listar_semanas():
     pronosticador = MODELOS["lstm_pronosticador"]
     if pronosticador is None:
-        raise HTTPException(status_code=503, detail="Módulo LSTM no cargado.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Módulo LSTM no cargado.",
+        )
 
     semanas = pronosticador.semanas_disponibles(incluir_futuro=True)
     return {
@@ -162,13 +272,16 @@ def pronosticar_casos(solicitud: SolicitudLSTM):
     modelo = MODELOS["lstm_modelo"]
 
     if pronosticador is None or modelo is None:
-        raise HTTPException(status_code=503, detail="Módulo LSTM no disponible.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Módulo LSTM no disponible.",
+        )
 
     try:
         tabla_pred = pronosticador.pronosticar_desde(modelo, solicitud.fecha)
         comp = pronosticador.comparar_con_umbral(modelo, solicitud.fecha)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error en pronóstico: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error en pronóstico: {str(e)}")
 
     detalle = []
     for fecha_idx, fila in tabla_pred.iterrows():
@@ -201,7 +314,10 @@ def pronosticar_casos(solicitud: SolicitudLSTM):
 def recomendar_accion(solicitud: SolicitudANN):
     ann = MODELOS["ann"]
     if ann is None:
-        raise HTTPException(status_code=503, detail="Módulo ANN no disponible.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Módulo ANN no disponible.",
+        )
 
     try:
         resultado = ann.predecir(
@@ -213,14 +329,17 @@ def recomendar_accion(solicitud: SolicitudANN):
         )
         return resultado
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error en inferencia ANN: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error en inferencia ANN: {str(e)}")
 
 
 @app.get("/data/cantones")
 def consultar_cantones(anio: Optional[int] = Query(None), provincia: Optional[str] = Query(None)):
     df = MODELOS["df_cantonal"]
     if df is None:
-        raise HTTPException(status_code=503, detail="Dataset cantonal no disponible.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Dataset cantonal no disponible.",
+        )
 
     df_res = df.copy()
     if anio is not None:
@@ -251,4 +370,6 @@ def consultar_cantones(anio: Optional[int] = Query(None), provincia: Optional[st
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("api.main:app", host="127.0.0.1", port=8000, reload=True)
+    host_env = os.environ.get("HOST", "0.0.0.0")
+    port_env = int(os.environ.get("PORT", "8000"))
+    uvicorn.run("api.main:app", host=host_env, port=port_env, reload=False)
